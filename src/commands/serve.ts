@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import { startServer } from "../server.js";
 import { TelegramAdapter } from "../adapters/telegram.js";
 import { ingestMessage } from "../message-ingest.js";
+import { claudePMChat, type ConversationMessage } from "../claude-pm.js";
 
 // ─── Startup banner ────────────────────────────────────────────────────────────
 
@@ -72,6 +73,11 @@ function printBanner(config: Config, args: string[]): void {
   console.log("");
 }
 
+// ─── Conversation history (in-memory, keyed by chat_id) ──────────────────────
+
+const conversationHistories = new Map<string, ConversationMessage[]>();
+const MAX_HISTORY = 10; // keep last 10 turns
+
 // ─── commandServe ──────────────────────────────────────────────────────────────
 
 export async function commandServe(
@@ -126,6 +132,27 @@ export async function commandServe(
         .startPolling(async (text: string, from: string) => {
           console.log(chalk.dim(`  [telegram] Message from ${from}: ${text.slice(0, 80)}`));
           try {
+            // Use the chat ID (from) as the history key
+            const chatId = from;
+
+            // If Claude is available, use it
+            if (config.anthropicApiKey) {
+              const history = conversationHistories.get(chatId) ?? [];
+              const { reply, toolsExecuted } = await claudePMChat(text, storage, config, history);
+
+              // Update history
+              history.push({ role: "user", content: text });
+              history.push({ role: "assistant", content: reply });
+              if (history.length > MAX_HISTORY * 2) history.splice(0, 2); // trim oldest
+              conversationHistories.set(chatId, history);
+
+              if (toolsExecuted.length > 0) {
+                console.log(chalk.dim(`  [telegram] Tools executed: ${toolsExecuted.join(", ")}`));
+              }
+              return reply;
+            }
+
+            // Fallback to rule-based parser
             const result = await ingestMessage(text, "telegram", storage, config);
 
             // Build a Telegram-friendly reply (can be longer than SMS)
