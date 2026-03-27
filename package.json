@@ -1,0 +1,35 @@
+{
+  "name": "bearing-pm-agent",
+  "version": "1.0.0",
+  "description": "BEARING PM Agent — orchestrates Kanban, editorial calendar, and sub-agent routing",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "ingest": "tsx src/index.ts ingest",
+    "board": "tsx src/index.ts board",
+    "sprint": "tsx src/index.ts sprint",
+    "editorial": "tsx src/index.ts editorial",
+    "summary": "tsx src/index.ts summary",
+    "decisions": "tsx src/index.ts decisions",
+    "route": "tsx src/index.ts route",
+    "demo": "tsx src/index.ts demo",
+    "serve": "tsx src/index.ts serve"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3",
+    "chalk": "^5.3.0",
+    "cli-table3": "^0.6.3",
+    "date-fns": "^3.3.1",
+    "dotenv": "^16.4.5",
+    "uuid": "^9.0.1",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/node": "^20.11.24",
+    "@types/uuid": "^9.0.8",
+    "tsx": "^4.7.1",
+    "typescript": "^5.4.2"
+  }
+}
