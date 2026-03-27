@@ -37,7 +37,7 @@ function buildRawConfig(): Record<string, unknown> {
     dbPath: process.env["PM_AGENT_DB_PATH"] ?? "./data/pm-agent.db",
     queueDir: process.env["PM_AGENT_QUEUE_DIR"] ?? "./data/agent-queue",
     logLevel: process.env["PM_AGENT_LOG_LEVEL"] ?? "info",
-    port: process.env["PM_AGENT_PORT"] ? parseInt(process.env["PM_AGENT_PORT"], 10) : 3000,
+    port: parseInt(process.env["PORT"] ?? process.env["PM_AGENT_PORT"] ?? "3000", 10),
     webhookSecret: process.env["PM_AGENT_WEBHOOK_SECRET"] || undefined,
     anthropicApiKey: process.env["ANTHROPIC_API_KEY"] || undefined,
   };
