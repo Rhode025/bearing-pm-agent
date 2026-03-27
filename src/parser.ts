@@ -554,6 +554,14 @@ const INTENT_RULES: IntentRule[] = [
       /\b(?:build|create|add|make|implement|fix|set\s+up|scaffold|refactor)\b/i,
       /\b(?:we\s+need|we\s+should|let'?s?\s+(?:build|create|add|make))\b/i,
       /\bnew\s+(?:ticket|task|feature|page|component|screen|endpoint|service)\b/i,
+      // Conversational / phone-style inputs
+      /\b(?:i\s+need|need\s+(?:a|an|to)|i\s+want|want\s+(?:a|an|to))\b/i,
+      /\b(?:improve|improvement|improve\s+the|better|polish|clean\s+up|clean\s+the)\b/i,
+      /\b(?:rework|redesign|rewrite|overhaul|revamp|update\s+the)\b/i,
+      /\b(?:add\s+(?:a|an|the)\s+\w+\s+(?:page|screen|component|button|form|section))\b/i,
+      /\b(?:the\s+\w+\s+(?:page|screen|flow|section|feature)\s+(?:needs?|should|could|is))\b/i,
+      /\b(?:make\s+(?:it|the|a|an))\b/i,
+      /\b(?:work\s+on|focus\s+on|tackle|address|handle)\b/i,
     ],
     intent: "create_ticket",
     weight: 0.7,
@@ -618,10 +626,14 @@ function extractTicketTitles(text: string, contentTitles: string[]): string[] {
     if (m[1]) titles.push(m[1].trim());
   }
 
-  // "build X" / "create X" / "add X" / "implement X"
+  // "build X" / "create X" / "add X" / "implement X" / conversational
   const buildPatterns = [
     /(?:build|create|add|make|implement|fix|set\s+up|scaffold|refactor)\s+(?:a\s+|an\s+|the\s+)?(.+?)(?:\s+(?:next|this|for|by|on)\s+sprint|\s+by\s+|\s+due\s+|$)/gi,
     /(?:new\s+)(?:ticket\s+for|task\s+for|feature\s+for)?\s*(.+?)(?:\s+next\s+sprint|\s+by\s+|$)/gi,
+    /(?:i\s+need|need\s+a|i\s+want|want\s+a)\s+(?:better\s+)?(.+?)(?:\s+(?:next|this|for|by|on)\s+sprint|\s+by\s+|$)/gi,
+    /(?:improve|polish|clean\s+up|rework|redesign|rewrite|revamp)\s+(?:the\s+)?(.+?)(?:\s+(?:next|this|for|by|on)\s+sprint|\s+by\s+|$)/gi,
+    /(?:work\s+on|focus\s+on|tackle|address)\s+(?:the\s+)?(.+?)(?:\s+(?:next|this|for|by|on)\s+sprint|\s+by\s+|$)/gi,
+    /(?:update|improve)\s+(?:the\s+)?(.+?)\s+(?:page|screen|flow|section|feature|detail|view)(?:\s+(?:next|this|for|by|on)\s+sprint|\s+by\s+|$)/gi,
   ];
 
   for (const pattern of buildPatterns) {

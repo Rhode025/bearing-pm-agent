@@ -130,11 +130,34 @@ export async function commandServe(
 
             // Build a Telegram-friendly reply (can be longer than SMS)
             const parts: string[] = [];
-            for (const msg of result.messages.slice(0, 5)) {
+            for (const msg of result.messages.slice(0, 8)) {
               parts.push(`• ${msg}`);
             }
+            for (const warn of result.warnings.slice(0, 3)) {
+              parts.push(`⚠ ${warn}`);
+            }
+
             if (parts.length === 0) {
-              parts.push("Message processed. No changes made.");
+              // Show what we received and offer usage hints
+              const lower = text.toLowerCase();
+              if (lower === "/start" || lower === "start" || lower === "hi" || lower === "hello" || lower === "hey") {
+                parts.push("👋 BEARING PM Agent ready.");
+                parts.push("");
+                parts.push("Send me work instructions like:");
+                parts.push("• \"Build a settings page next sprint\"");
+                parts.push("• \"Article idea: why ski timing matters\"");
+                parts.push("• \"Have design review the dashboard\"");
+                parts.push("• \"What's in flight right now?\"");
+                parts.push("• \"Move the dashboard ticket to blocked\"");
+              } else {
+                parts.push(`I received: "${text.slice(0, 80)}"`);
+                parts.push("");
+                parts.push("I wasn't sure what to do with that. Try:");
+                parts.push("• Start with \"build\", \"create\", \"improve\", \"fix\", \"add\"");
+                parts.push("• \"Article idea: ...\" for content");
+                parts.push("• \"What's in flight?\" for board status");
+                parts.push("• \"Move X to blocked\" to update status");
+              }
             }
 
             const counts: string[] = [];
@@ -148,7 +171,7 @@ export async function commandServe(
               counts.push(`${result.decisionsLogged.length} decision(s) logged`);
 
             if (counts.length > 0) {
-              parts.push(`\n_${counts.join(", ")}_`);
+              parts.push(`\n✅ ${counts.join(", ")}`);
             }
 
             return parts.join("\n");
