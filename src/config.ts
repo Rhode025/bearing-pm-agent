@@ -28,12 +28,13 @@ const ConfigSchema = z.object({
   telegram: TelegramConfigSchema.optional(),
   githubToken: z.string().optional(),
   githubRepo: z.string().default("Rhode025/bearing"),
+  githubRepos: z.array(z.string()).default(["Rhode025/bearing", "Rhode025/epic-pass-monitor"]),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
 export type TwilioConfig = z.infer<typeof TwilioConfigSchema>;
 export type TelegramConfig = z.infer<typeof TelegramConfigSchema>;
-export type GithubConfig = Pick<Config, "githubToken" | "githubRepo">;
+export type GithubConfig = Pick<Config, "githubToken" | "githubRepo" | "githubRepos">;
 
 function buildRawConfig(): Record<string, unknown> {
   const raw: Record<string, unknown> = {
@@ -45,6 +46,9 @@ function buildRawConfig(): Record<string, unknown> {
     anthropicApiKey: process.env["ANTHROPIC_API_KEY"] || undefined,
     githubToken: process.env["GITHUB_TOKEN"] || undefined,
     githubRepo: process.env["GITHUB_REPO"] ?? "Rhode025/bearing",
+    githubRepos: process.env["GITHUB_REPOS"]
+      ? process.env["GITHUB_REPOS"].split(",").map((r) => r.trim())
+      : ["Rhode025/bearing", "Rhode025/epic-pass-monitor"],
   };
 
   const twilioSid = process.env["TWILIO_ACCOUNT_SID"];

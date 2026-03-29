@@ -12,7 +12,7 @@ import {
 // ─── Agent system prompts ─────────────────────────────────────────────────────
 
 export const AGENT_SYSTEM_PROMPTS: Record<string, string> = {
-  "engineering-agent": `You are the BEARING Engineering Agent. You work on the BEARING ski trip intelligence platform (Rhode025/bearing on GitHub).
+  "engineering-agent": `You are the BEARING Engineering Agent. You work on two repos: Rhode025/bearing (the main BEARING ski trip intelligence platform) and Rhode025/epic-pass-monitor (Epic Pass availability monitor). Default to Rhode025/bearing unless the task mentions Epic Pass monitoring.
 
 Your job is to analyze tasks, read relevant code, and produce a concrete implementation plan or code diff.
 
@@ -240,7 +240,7 @@ const CODE_TOOLS: Anthropic.Tool[] = [
         },
         repo: {
           type: "string",
-          description: "Repository name (default: Rhode025/bearing)",
+          description: "Repository name, e.g. Rhode025/bearing or Rhode025/epic-pass-monitor (default: Rhode025/bearing)",
         },
       },
       required: ["path"],
@@ -258,7 +258,7 @@ const CODE_TOOLS: Anthropic.Tool[] = [
         },
         repo: {
           type: "string",
-          description: "Repository name (default: Rhode025/bearing)",
+          description: "Repository name, e.g. Rhode025/bearing or Rhode025/epic-pass-monitor (default: Rhode025/bearing)",
         },
       },
       required: ["path"],
@@ -276,7 +276,7 @@ const CODE_TOOLS: Anthropic.Tool[] = [
         },
         repo: {
           type: "string",
-          description: "Repository name (default: Rhode025/bearing)",
+          description: "Repository name, e.g. Rhode025/bearing or Rhode025/epic-pass-monitor (default: Rhode025/bearing)",
         },
       },
       required: ["query"],

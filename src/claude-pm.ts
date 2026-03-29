@@ -226,7 +226,9 @@ BEARING is a premium web app (bearingtravel.com) that helps serious skiers make 
 - research-agent: user research, competitive analysis
 - growth-agent: conversion, onboarding, marketing
 
-## BEARING Codebase (Rhode025/bearing)
+## Repos you have access to
+
+### Rhode025/bearing — BEARING ski trip intelligence platform
 Key directories:
 - app/ — Next.js App Router pages and layouts
   - app/dashboard/ — member dashboard (page.tsx, travel-windows/, etc.)
@@ -240,6 +242,12 @@ Key directories:
   - lib/data/airports.ts — airport data and fuzzy search
 - components/ — shared React components (airport-combobox.tsx, etc.)
 - supabase/migrations/ — SQL migrations
+
+### Rhode025/epic-pass-monitor — Epic Pass availability monitor
+Monitors Epic Pass reservation availability and alerts users. Use this repo when asked about:
+- Pass availability tracking, scraping, or monitoring logic
+- Epic Pass alerts, notifications, or scheduling
+- Any code related to Epic/Ikon pass monitoring
 
 ## Recent UX Audit Findings (from automated audit, Mar 27 2026)
 High priority:
@@ -696,7 +704,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "read_repo_file",
     description:
-      "Read the content of a file from the BEARING GitHub repository.",
+      "Read the content of a file from a GitHub repository.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -706,7 +714,7 @@ const TOOLS: Anthropic.Tool[] = [
         },
         repo: {
           type: "string",
-          description: "Repository name (default: Rhode025/bearing)",
+          description: "Repository name, e.g. Rhode025/bearing or Rhode025/epic-pass-monitor (default: Rhode025/bearing)",
         },
       },
       required: ["path"],
@@ -715,7 +723,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "list_repo_directory",
     description:
-      "List files and subdirectories at a path in the BEARING repo.",
+      "List files and subdirectories at a path in a GitHub repo.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -725,7 +733,7 @@ const TOOLS: Anthropic.Tool[] = [
         },
         repo: {
           type: "string",
-          description: "Repository name (default: Rhode025/bearing)",
+          description: "Repository name, e.g. Rhode025/bearing or Rhode025/epic-pass-monitor (default: Rhode025/bearing)",
         },
       },
       required: ["path"],
@@ -734,7 +742,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "search_repo_code",
     description:
-      "Search for code patterns across the BEARING repository.",
+      "Search for code patterns across a GitHub repository.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -744,7 +752,7 @@ const TOOLS: Anthropic.Tool[] = [
         },
         repo: {
           type: "string",
-          description: "Repository name (default: Rhode025/bearing)",
+          description: "Repository name, e.g. Rhode025/bearing or Rhode025/epic-pass-monitor (default: Rhode025/bearing)",
         },
       },
       required: ["query"],
@@ -753,13 +761,13 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "get_recent_commits",
     description:
-      "Get recent git commits from the BEARING repository.",
+      "Get recent git commits from a GitHub repository.",
     input_schema: {
       type: "object" as const,
       properties: {
         repo: {
           type: "string",
-          description: "Repository name (default: Rhode025/bearing)",
+          description: "Repository name, e.g. Rhode025/bearing or Rhode025/epic-pass-monitor (default: Rhode025/bearing)",
         },
         limit: {
           type: "number",
