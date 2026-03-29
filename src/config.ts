@@ -26,11 +26,14 @@ const ConfigSchema = z.object({
   anthropicApiKey: z.string().optional(),
   twilio: TwilioConfigSchema.optional(),
   telegram: TelegramConfigSchema.optional(),
+  githubToken: z.string().optional(),
+  githubRepo: z.string().default("Rhode025/bearing"),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
 export type TwilioConfig = z.infer<typeof TwilioConfigSchema>;
 export type TelegramConfig = z.infer<typeof TelegramConfigSchema>;
+export type GithubConfig = Pick<Config, "githubToken" | "githubRepo">;
 
 function buildRawConfig(): Record<string, unknown> {
   const raw: Record<string, unknown> = {
@@ -40,6 +43,8 @@ function buildRawConfig(): Record<string, unknown> {
     port: parseInt(process.env["PORT"] ?? process.env["PM_AGENT_PORT"] ?? "3000", 10),
     webhookSecret: process.env["PM_AGENT_WEBHOOK_SECRET"] || undefined,
     anthropicApiKey: process.env["ANTHROPIC_API_KEY"] || undefined,
+    githubToken: process.env["GITHUB_TOKEN"] || undefined,
+    githubRepo: process.env["GITHUB_REPO"] ?? "Rhode025/bearing",
   };
 
   const twilioSid = process.env["TWILIO_ACCOUNT_SID"];

@@ -737,6 +737,14 @@ export class Storage {
     }
   }
 
+  deleteCalendarItem(id: string): void {
+    try {
+      this.db.prepare("DELETE FROM calendar_items WHERE id = ?").run(id);
+    } catch (err) {
+      throw new Error(`Storage.deleteCalendarItem failed for id=${id}: ${String(err)}`);
+    }
+  }
+
   // ─── Initiatives ─────────────────────────────────────────────────────────────
 
   saveInitiative(i: Initiative): void {

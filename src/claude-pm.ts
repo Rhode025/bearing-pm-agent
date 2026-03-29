@@ -5,6 +5,7 @@ import type { Config } from "./config.js";
 import type {
   AgentName,
   ContentType,
+  ContentStatus,
   TicketStatus,
   TicketPriority,
 } from "./types.js";
@@ -12,10 +13,26 @@ import { createTicket, moveTicket, assignTicket } from "./kanban.js";
 import {
   createCalendarItem,
   scheduleCalendarItem,
+  updateCalendarItem,
 } from "./editorial-calendar.js";
 import { createInitiative, findInitiativeByKeyword } from "./initiatives.js";
-import { logDecision } from "./decision-log.js";
-import { getActiveSprint, getNextSprint, getBacklog } from "./sprints.js";
+import { logDecision, listDecisions } from "./decision-log.js";
+import {
+  getActiveSprint,
+  getNextSprint,
+  getBacklog,
+  addToSprint,
+  removeFromSprint,
+  createSprint,
+  listSprints,
+} from "./sprints.js";
+import {
+  readRepoFile,
+  listRepoDirectory,
+  searchRepoCode,
+  getRecentCommits,
+  getRepoStructure,
+} from "./github.js";
 
 // ─── Conversation history type ────────────────────────────────────────────────
 
@@ -202,6 +219,32 @@ BEARING is a premium web app (bearingtravel.com) that helps serious skiers make 
 - research-agent: user research, competitive analysis
 - growth-agent: conversion, onboarding, marketing
 
+## BEARING Codebase (Rhode025/bearing)
+Key directories:
+- app/ — Next.js App Router pages and layouts
+  - app/dashboard/ — member dashboard (page.tsx, travel-windows/, etc.)
+  - app/login/, app/signup/ — auth pages
+  - app/membership/ — membership/upgrade pages
+  - app/api/ — API routes (cron, pro, etc.)
+- lib/ — shared utilities and business logic
+  - lib/travel-windows/ — Travel Windows pipeline (jobs.ts, scoring.ts, types.ts, providers/)
+  - lib/supabase/ — Supabase client helpers (server.ts, admin.ts, client.ts)
+  - lib/integrations/duffel.ts — Duffel flight search
+  - lib/data/airports.ts — airport data and fuzzy search
+- components/ — shared React components (airport-combobox.tsx, etc.)
+- supabase/migrations/ — SQL migrations
+
+## Recent UX Audit Findings (from automated audit, Mar 27 2026)
+High priority:
+- POST /dashboard returning 500 errors (console errors on dashboard load)
+- /api/pro/opportunity-report returning failed
+- Membership upgrade page missing benefit bullets before CTA
+
+Medium priority:
+- Missing aria-label on AirportCombobox input and icon-only buttons
+- Annual vs one-time window type toggle needs helper text
+- Alert count on Travel Windows list doesn't drive action (no inline dismiss)
+
 ## How you work
 - You receive messages from the product owner (Steven) via Telegram or API
 - Messages are often short and informal, sent from a phone
@@ -210,6 +253,11 @@ BEARING is a premium web app (bearingtravel.com) that helps serious skiers make 
 - You never make up ticket IDs — always reference real data from the board state provided
 - You keep responses concise but complete — bullet points over paragraphs
 - When something is ambiguous, make a reasonable assumption and state it
+- You can read files from the BEARING GitHub repo using read_repo_file
+- You can list directories, search code, and view recent commits
+- When asked about the codebase, fetch the actual file rather than guessing
+- You have access to the PM board AND the actual code — use both
+- Today's date is 2026-03-29
 
 ## Current board state
 ${boardState}
@@ -449,6 +497,275 @@ const TOOLS: Anthropic.Tool[] = [
       required: [],
     },
   },
+  {
+    name: "list_tickets",
+    description:
+      "List all tickets with optional filters. Returns full ticket details.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        status: {
+          type: "string",
+          enum: ["inbox", "ready", "in_progress", "in_review", "blocked", "done", "icebox"],
+          description: "Filter by status",
+        },
+        agent: {
+          type: "string",
+          enum: [
+            "engineering-agent", "ui-agent", "design-agent", "qa-agent",
+            "editorial-agent", "seo-agent", "research-agent", "growth-agent", "pm-agent",
+          ],
+          description: "Filter by assigned agent",
+        },
+        priority: {
+          type: "string",
+          enum: ["critical", "high", "medium", "low"],
+          description: "Filter by priority",
+        },
+        sprint: {
+          type: "string",
+          enum: ["current", "next", "backlog", "all"],
+          description: "Filter by sprint context",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "update_ticket",
+    description:
+      "Update fields of an existing ticket. Accepts UUID or partial title.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        ticket_id_or_title: {
+          type: "string",
+          description: "UUID or partial ticket title",
+        },
+        title: { type: "string" },
+        description: { type: "string" },
+        priority: {
+          type: "string",
+          enum: ["critical", "high", "medium", "low"],
+        },
+        tags: { type: "array", items: { type: "string" } },
+        status: {
+          type: "string",
+          enum: ["inbox", "ready", "in_progress", "in_review", "blocked", "done", "icebox"],
+        },
+        agent: {
+          type: "string",
+          enum: [
+            "engineering-agent", "ui-agent", "design-agent", "qa-agent",
+            "editorial-agent", "seo-agent", "research-agent", "growth-agent", "pm-agent",
+          ],
+        },
+      },
+      required: ["ticket_id_or_title"],
+    },
+  },
+  {
+    name: "delete_ticket",
+    description:
+      "Permanently remove a ticket. Requires explicit confirmation in the tool call.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        ticket_id_or_title: {
+          type: "string",
+          description: "UUID or partial ticket title",
+        },
+        confirm: {
+          type: "boolean",
+          description: "Must be true to confirm deletion",
+        },
+      },
+      required: ["ticket_id_or_title", "confirm"],
+    },
+  },
+  {
+    name: "manage_sprint",
+    description:
+      "Add or remove a ticket from a sprint, or create a new sprint.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        action: {
+          type: "string",
+          enum: ["add", "remove", "create"],
+          description: "Action to perform",
+        },
+        sprint_id_or_name: {
+          type: "string",
+          description: "Sprint ID or name (for add/remove)",
+        },
+        ticket_id_or_title: {
+          type: "string",
+          description: "Ticket ID or partial title (for add/remove)",
+        },
+        sprint_name: {
+          type: "string",
+          description: "Name of the new sprint (for create)",
+        },
+        sprint_goal: {
+          type: "string",
+          description: "Goal of the new sprint (for create)",
+        },
+        start_date: {
+          type: "string",
+          description: "Start date YYYY-MM-DD (for create)",
+        },
+        end_date: {
+          type: "string",
+          description: "End date YYYY-MM-DD (for create)",
+        },
+      },
+      required: ["action"],
+    },
+  },
+  {
+    name: "update_calendar_item",
+    description:
+      "Update fields of an existing calendar item. Accepts UUID or partial title.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        item_id_or_title: {
+          type: "string",
+          description: "UUID or partial title",
+        },
+        title: { type: "string" },
+        content_type: {
+          type: "string",
+          enum: [
+            "article", "blog_post", "newsletter", "landing_page",
+            "social_campaign", "release_notes", "content_refresh", "case_study", "announcement",
+          ],
+        },
+        status: {
+          type: "string",
+          enum: ["idea", "draft", "in_review", "scheduled", "published", "archived"],
+        },
+        notes: { type: "string" },
+        publish_date: { type: "string", description: "ISO date YYYY-MM-DD" },
+        due_date: { type: "string", description: "ISO date YYYY-MM-DD" },
+      },
+      required: ["item_id_or_title"],
+    },
+  },
+  {
+    name: "delete_calendar_item",
+    description: "Remove a calendar item.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        item_id_or_title: {
+          type: "string",
+          description: "UUID or partial title",
+        },
+        confirm: {
+          type: "boolean",
+          description: "Must be true to confirm deletion",
+        },
+      },
+      required: ["item_id_or_title", "confirm"],
+    },
+  },
+  {
+    name: "read_repo_file",
+    description:
+      "Read the content of a file from the BEARING GitHub repository.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: "File path, e.g. \"app/dashboard/page.tsx\"",
+        },
+        repo: {
+          type: "string",
+          description: "Repository name (default: Rhode025/bearing)",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "list_repo_directory",
+    description:
+      "List files and subdirectories at a path in the BEARING repo.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: "Directory path, e.g. \"app/dashboard\" or \"\" for root",
+        },
+        repo: {
+          type: "string",
+          description: "Repository name (default: Rhode025/bearing)",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "search_repo_code",
+    description:
+      "Search for code patterns across the BEARING repository.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query, e.g. \"runWindowPipeline\" or \"travel_windows\"",
+        },
+        repo: {
+          type: "string",
+          description: "Repository name (default: Rhode025/bearing)",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "get_recent_commits",
+    description:
+      "Get recent git commits from the BEARING repository.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: {
+          type: "string",
+          description: "Repository name (default: Rhode025/bearing)",
+        },
+        limit: {
+          type: "number",
+          description: "Number of commits to return (default: 10)",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "list_all_decisions",
+    description: "Return all decision log entries.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "list_all_initiatives",
+    description:
+      "Return all initiatives with linked ticket and content counts.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 // ─── Fuzzy ticket finder ───────────────────────────────────────────────────────
@@ -542,12 +859,12 @@ function fuzzyFindCalendarItem(
 
 // ─── Tool executor ────────────────────────────────────────────────────────────
 
-export function executeToolCall(
+export async function executeToolCall(
   toolName: string,
   toolInput: Record<string, unknown>,
   storage: Storage,
   config: Config
-): string {
+): Promise<string> {
   try {
     switch (toolName) {
       case "create_ticket": {
@@ -820,6 +1137,376 @@ export function executeToolCall(
         });
       }
 
+      case "list_tickets": {
+        const statusFilter = toolInput["status"] as TicketStatus | undefined;
+        const agentFilter = toolInput["agent"] as AgentName | undefined;
+        const priorityFilter = toolInput["priority"] as TicketPriority | undefined;
+        const sprintFilter = toolInput["sprint"] as string | undefined;
+
+        let tickets = storage.listTickets();
+
+        // Apply filters
+        if (statusFilter) {
+          tickets = tickets.filter((t) => t.status === statusFilter);
+        }
+        if (agentFilter) {
+          tickets = tickets.filter((t) => t.assignedAgent === agentFilter);
+        }
+        if (priorityFilter) {
+          tickets = tickets.filter((t) => t.priority === priorityFilter);
+        }
+        if (sprintFilter && sprintFilter !== "all") {
+          if (sprintFilter === "current") {
+            const active = getActiveSprint(storage);
+            const ids = new Set(active?.ticketIds ?? []);
+            tickets = tickets.filter((t) => ids.has(t.id));
+          } else if (sprintFilter === "next") {
+            const next = getNextSprint(storage);
+            const ids = new Set(next?.ticketIds ?? []);
+            tickets = tickets.filter((t) => ids.has(t.id));
+          } else if (sprintFilter === "backlog") {
+            tickets = tickets.filter((t) => !t.sprintId);
+          }
+        }
+
+        return JSON.stringify({
+          ok: true,
+          count: tickets.length,
+          tickets: tickets.map((t) => ({
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            agent: t.assignedAgent,
+            priority: t.priority,
+            sprint_id: t.sprintId,
+            tags: t.tags,
+            blockers: t.blockers,
+            created_at: t.createdAt,
+          })),
+        });
+      }
+
+      case "update_ticket": {
+        const idOrTitle = String(toolInput["ticket_id_or_title"] ?? "");
+        const ticketId = fuzzyFindTicket(storage, idOrTitle);
+        if (!ticketId) {
+          return JSON.stringify({
+            ok: false,
+            error: `No ticket found matching: "${idOrTitle}"`,
+          });
+        }
+
+        const updates: Record<string, unknown> = {};
+        if (toolInput["title"] !== undefined) updates["title"] = String(toolInput["title"]);
+        if (toolInput["description"] !== undefined) updates["description"] = String(toolInput["description"]);
+        if (toolInput["priority"] !== undefined) updates["priority"] = toolInput["priority"] as TicketPriority;
+        if (toolInput["tags"] !== undefined) updates["tags"] = toolInput["tags"] as string[];
+
+        if (toolInput["agent"] !== undefined) {
+          assignTicket(storage, ticketId, toolInput["agent"] as AgentName);
+        }
+        if (toolInput["status"] !== undefined) {
+          moveTicket(storage, ticketId, toolInput["status"] as TicketStatus);
+        }
+        if (Object.keys(updates).length > 0) {
+          storage.updateTicket(ticketId, updates as Partial<Parameters<typeof storage.updateTicket>[1]>);
+        }
+
+        const updated = storage.getTicket(ticketId);
+        return JSON.stringify({
+          ok: true,
+          action: "update_ticket",
+          ticket_id: ticketId,
+          title: updated?.title,
+          status: updated?.status,
+          agent: updated?.assignedAgent,
+          priority: updated?.priority,
+        });
+      }
+
+      case "delete_ticket": {
+        const confirm = toolInput["confirm"];
+        if (confirm !== true) {
+          return JSON.stringify({
+            ok: false,
+            error: "Deletion requires confirm: true",
+          });
+        }
+        const idOrTitle = String(toolInput["ticket_id_or_title"] ?? "");
+        const ticketId = fuzzyFindTicket(storage, idOrTitle);
+        if (!ticketId) {
+          return JSON.stringify({
+            ok: false,
+            error: `No ticket found matching: "${idOrTitle}"`,
+          });
+        }
+        const ticket = storage.getTicket(ticketId);
+        storage.deleteTicket(ticketId);
+        return JSON.stringify({
+          ok: true,
+          action: "delete_ticket",
+          ticket_id: ticketId,
+          title: ticket?.title,
+        });
+      }
+
+      case "manage_sprint": {
+        const action = String(toolInput["action"] ?? "");
+
+        if (action === "create") {
+          const name = String(toolInput["sprint_name"] ?? "New Sprint");
+          const goal = toolInput["sprint_goal"] ? String(toolInput["sprint_goal"]) : undefined;
+          const startDate = String(toolInput["start_date"] ?? new Date().toISOString().slice(0, 10));
+          const endDate = String(toolInput["end_date"] ?? new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10));
+          const sprint = createSprint(storage, { name, goal, startDate, endDate });
+          return JSON.stringify({
+            ok: true,
+            action: "create_sprint",
+            sprint_id: sprint.id,
+            name: sprint.name,
+          });
+        }
+
+        if (action === "add" || action === "remove") {
+          const ticketIdOrTitle = String(toolInput["ticket_id_or_title"] ?? "");
+          const ticketId = fuzzyFindTicket(storage, ticketIdOrTitle);
+          if (!ticketId) {
+            return JSON.stringify({
+              ok: false,
+              error: `No ticket found matching: "${ticketIdOrTitle}"`,
+            });
+          }
+
+          // Resolve sprint
+          let sprintId: string | null = null;
+          const sprintIdOrName = toolInput["sprint_id_or_name"]
+            ? String(toolInput["sprint_id_or_name"])
+            : null;
+
+          if (sprintIdOrName) {
+            const allSprints = listSprints(storage);
+            // Try exact ID first
+            const byId = allSprints.find((s) => s.id === sprintIdOrName);
+            if (byId) {
+              sprintId = byId.id;
+            } else {
+              // Try name match
+              const needle = sprintIdOrName.toLowerCase();
+              const byName = allSprints.find((s) =>
+                s.name.toLowerCase().includes(needle)
+              );
+              if (byName) sprintId = byName.id;
+            }
+          }
+
+          if (!sprintId) {
+            // Default to current sprint for "add", find which sprint for "remove"
+            if (action === "add") {
+              const active = getActiveSprint(storage);
+              sprintId = active?.id ?? null;
+            } else {
+              // Find the sprint that contains this ticket
+              const allSprints = listSprints(storage);
+              const containing = allSprints.find((s) =>
+                s.ticketIds.includes(ticketId)
+              );
+              sprintId = containing?.id ?? null;
+            }
+          }
+
+          if (!sprintId) {
+            return JSON.stringify({
+              ok: false,
+              error: action === "add"
+                ? "No active sprint found to add ticket to"
+                : "Ticket is not in any sprint",
+            });
+          }
+
+          if (action === "add") {
+            addToSprint(storage, sprintId, ticketId);
+            return JSON.stringify({
+              ok: true,
+              action: "add_to_sprint",
+              ticket_id: ticketId,
+              sprint_id: sprintId,
+            });
+          } else {
+            removeFromSprint(storage, sprintId, ticketId);
+            return JSON.stringify({
+              ok: true,
+              action: "remove_from_sprint",
+              ticket_id: ticketId,
+              sprint_id: sprintId,
+            });
+          }
+        }
+
+        return JSON.stringify({ ok: false, error: `Unknown manage_sprint action: "${action}"` });
+      }
+
+      case "update_calendar_item": {
+        const idOrTitle = String(toolInput["item_id_or_title"] ?? "");
+        const itemId = fuzzyFindCalendarItem(storage, idOrTitle);
+        if (!itemId) {
+          return JSON.stringify({
+            ok: false,
+            error: `No calendar item found matching: "${idOrTitle}"`,
+          });
+        }
+
+        const updates: Partial<import("./types.js").EditorialCalendarItem> = {};
+        if (toolInput["title"] !== undefined) updates.title = String(toolInput["title"]);
+        if (toolInput["content_type"] !== undefined) updates.contentType = toolInput["content_type"] as ContentType;
+        if (toolInput["status"] !== undefined) updates.status = toolInput["status"] as ContentStatus;
+        if (toolInput["notes"] !== undefined) updates.notes = String(toolInput["notes"]);
+        if (toolInput["publish_date"] !== undefined) updates.publishDate = String(toolInput["publish_date"]);
+        if (toolInput["due_date"] !== undefined) updates.dueDate = String(toolInput["due_date"]);
+
+        const updated = updateCalendarItem(storage, itemId, updates);
+        return JSON.stringify({
+          ok: true,
+          action: "update_calendar_item",
+          item_id: itemId,
+          title: updated.title,
+          status: updated.status,
+          publish_date: updated.publishDate,
+        });
+      }
+
+      case "delete_calendar_item": {
+        const confirm = toolInput["confirm"];
+        if (confirm !== true) {
+          return JSON.stringify({
+            ok: false,
+            error: "Deletion requires confirm: true",
+          });
+        }
+        const idOrTitle = String(toolInput["item_id_or_title"] ?? "");
+        const itemId = fuzzyFindCalendarItem(storage, idOrTitle);
+        if (!itemId) {
+          return JSON.stringify({
+            ok: false,
+            error: `No calendar item found matching: "${idOrTitle}"`,
+          });
+        }
+        const item = storage.getCalendarItem(itemId);
+        // Archive the item (soft delete)
+        storage.updateCalendarItem(itemId, { status: "archived" });
+        return JSON.stringify({
+          ok: true,
+          action: "delete_calendar_item",
+          item_id: itemId,
+          title: item?.title,
+          note: "Item archived (status set to archived)",
+        });
+      }
+
+      case "read_repo_file": {
+        if (!config.githubToken) {
+          return JSON.stringify({
+            ok: false,
+            error: "GITHUB_TOKEN is not configured. Set it in .env to read repo files.",
+          });
+        }
+        const filePath = String(toolInput["path"] ?? "");
+        const repo = toolInput["repo"] ? String(toolInput["repo"]) : config.githubRepo;
+        const content = await readRepoFile(config.githubToken, repo, filePath);
+        return JSON.stringify({
+          ok: true,
+          repo,
+          path: filePath,
+          content,
+        });
+      }
+
+      case "list_repo_directory": {
+        if (!config.githubToken) {
+          return JSON.stringify({
+            ok: false,
+            error: "GITHUB_TOKEN is not configured. Set it in .env to browse the repo.",
+          });
+        }
+        const dirPath = String(toolInput["path"] ?? "");
+        const repo = toolInput["repo"] ? String(toolInput["repo"]) : config.githubRepo;
+        const files = await listRepoDirectory(config.githubToken, repo, dirPath);
+        return JSON.stringify({
+          ok: true,
+          repo,
+          path: dirPath,
+          files,
+        });
+      }
+
+      case "search_repo_code": {
+        if (!config.githubToken) {
+          return JSON.stringify({
+            ok: false,
+            error: "GITHUB_TOKEN is not configured. Set it in .env to search code.",
+          });
+        }
+        const query = String(toolInput["query"] ?? "");
+        const repo = toolInput["repo"] ? String(toolInput["repo"]) : config.githubRepo;
+        const results = await searchRepoCode(config.githubToken, repo, query);
+        return JSON.stringify({
+          ok: true,
+          repo,
+          query,
+          results,
+        });
+      }
+
+      case "get_recent_commits": {
+        if (!config.githubToken) {
+          return JSON.stringify({
+            ok: false,
+            error: "GITHUB_TOKEN is not configured. Set it in .env to view commits.",
+          });
+        }
+        const repo = toolInput["repo"] ? String(toolInput["repo"]) : config.githubRepo;
+        const limit = toolInput["limit"] ? Number(toolInput["limit"]) : 10;
+        const commits = await getRecentCommits(config.githubToken, repo, limit);
+        return JSON.stringify({
+          ok: true,
+          repo,
+          commits,
+        });
+      }
+
+      case "list_all_decisions": {
+        const decisions = listDecisions(storage);
+        return JSON.stringify({
+          ok: true,
+          count: decisions.length,
+          decisions: decisions.map((d) => ({
+            id: d.id,
+            decision: d.decision,
+            rationale: d.rationale,
+            tags: d.tags,
+            made_by: d.madeBy,
+            created_at: d.createdAt,
+          })),
+        });
+      }
+
+      case "list_all_initiatives": {
+        const initiatives = storage.listInitiatives();
+        return JSON.stringify({
+          ok: true,
+          count: initiatives.length,
+          initiatives: initiatives.map((ini) => ({
+            id: ini.id,
+            name: ini.name,
+            description: ini.description,
+            status: ini.status,
+            ticket_count: ini.ticketIds.length,
+            content_count: ini.calendarItemIds.length,
+            tags: ini.tags,
+            target_date: ini.targetDate,
+          })),
+        });
+      }
+
       default:
         return JSON.stringify({ ok: false, error: `Unknown tool: ${toolName}` });
     }
@@ -887,7 +1574,7 @@ export async function claudePMChat(
     for (const toolUse of toolUseBlocks) {
       const toolInput = toolUse.input as Record<string, unknown>;
       console.log(`  [claude] executing tool: ${toolUse.name}`);
-      const result = executeToolCall(toolUse.name, toolInput, storage, config);
+      const result = await executeToolCall(toolUse.name, toolInput, storage, config);
       toolsExecuted.push(toolUse.name);
       toolResults.push({
         type: "tool_result",

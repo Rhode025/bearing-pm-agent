@@ -143,7 +143,7 @@ export class TelegramAdapter {
    * the sender's chat.
    */
   async startPolling(
-    onMessage: (text: string, from: string) => Promise<string>
+    onMessage: (text: string, from: string, chatId: string) => Promise<string>
   ): Promise<void> {
     this.pollingActive = true;
     console.log("[telegram] Starting long-poll loop (timeout=30s)…");
@@ -181,7 +181,7 @@ export class TelegramAdapter {
           const chatId = String(msg.chat.id);
 
           // Process asynchronously so we don't block the poll loop
-          onMessage(text, from)
+          onMessage(text, from, chatId)
             .then((reply) => this.sendMessage(reply, chatId))
             .catch((err: unknown) => {
               console.error(

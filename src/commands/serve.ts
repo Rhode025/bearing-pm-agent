@@ -129,12 +129,9 @@ export async function commandServe(
       // We intentionally do NOT await it here — we want it to run in the background
       // alongside the HTTP server.
       telegram
-        .startPolling(async (text: string, from: string) => {
-          console.log(chalk.dim(`  [telegram] Message from ${from}: ${text.slice(0, 80)}`));
+        .startPolling(async (text: string, from: string, chatId: string) => {
+          console.log(chalk.dim(`  [telegram] Message from ${from} (${chatId}): ${text.slice(0, 80)}`));
           try {
-            // Use the chat ID (from) as the history key
-            const chatId = from;
-
             // If Claude is available, use it
             if (config.anthropicApiKey) {
               const history = conversationHistories.get(chatId) ?? [];

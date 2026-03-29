@@ -72,6 +72,12 @@ export function removeFromSprint(
   }
 }
 
+// ─── List sprints ──────────────────────────────────────────────────────────────
+
+export function listSprints(storage: Storage): Sprint[] {
+  return storage.listSprints();
+}
+
 // ─── Get active / next sprint ──────────────────────────────────────────────────
 
 export function getActiveSprint(storage: Storage): Sprint | null {
