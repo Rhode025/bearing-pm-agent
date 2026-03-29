@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { v4 as uuidv4 } from "uuid";
 import { format, parseISO } from "date-fns";
 import type { Storage } from "./storage.js";
 import type { Config } from "./config.js";
@@ -33,6 +34,12 @@ import {
   getRecentCommits,
   getRepoStructure,
 } from "./github.js";
+import { runAgent, AGENT_SYSTEM_PROMPTS } from "./agent-runner.js";
+import {
+  createAgentDefinition,
+  listAgentDefinitions,
+  deleteAgentDefinition,
+} from "./agent-registry.js";
 
 // ─── Conversation history type ────────────────────────────────────────────────
 
@@ -261,6 +268,21 @@ Medium priority:
 
 ## Current board state
 ${boardState}
+
+## Agent Execution
+You can actually RUN agents using dispatch_to_agent. This makes a real Claude API call where the agent reads code, analyzes the problem, and produces concrete output.
+
+Example uses:
+- "Have engineering-agent analyze the 500 error on the dashboard" → dispatch_to_agent with engineering-agent
+- "Get editorial-agent to draft the fare drop article" → dispatch_to_agent with editorial-agent
+- "Create a new conversion-rate-agent to work on membership upgrade flow" → create_agent
+
+When dispatching, give the agent:
+- A clear, specific task description
+- The relevant ticket ID or title if applicable
+- Any additional context that will help
+
+Agent output is stored in the ticket description and the run log. You can retrieve it with get_agent_runs.
 
 ## Recent decisions
 ${recentDecisions || "(none yet)"}`;
@@ -763,6 +785,94 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: "object" as const,
       properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "dispatch_to_agent",
+    description:
+      "Actually run a sub-agent on a task. The agent uses Claude to analyze the ticket, read relevant code, and produce a concrete output. Returns the agent's work product.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        agent_name: {
+          type: "string",
+          description: "Name of built-in or custom agent (e.g. engineering-agent)",
+        },
+        task: {
+          type: "string",
+          description: "Clear task description for the agent",
+        },
+        ticket_id_or_title: {
+          type: "string",
+          description: "Optional: UUID or partial title of a linked ticket",
+        },
+        context: {
+          type: "string",
+          description: "Additional context to pass to the agent",
+        },
+      },
+      required: ["agent_name", "task"],
+    },
+  },
+  {
+    name: "create_agent",
+    description:
+      "Define a new agent type with a custom name, system prompt, and capabilities. The agent can then be dispatched to do work.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        name: {
+          type: "string",
+          description: "Unique slug, e.g. \"conversion-agent\"",
+        },
+        display_name: {
+          type: "string",
+          description: "Human-readable name",
+        },
+        description: {
+          type: "string",
+          description: "What this agent does",
+        },
+        system_prompt: {
+          type: "string",
+          description: "Full system prompt for the agent",
+        },
+        capabilities: {
+          type: "array",
+          items: { type: "string" },
+          description: "List of capabilities/tools this agent has",
+        },
+      },
+      required: ["name", "display_name", "description", "system_prompt", "capabilities"],
+    },
+  },
+  {
+    name: "list_agents",
+    description:
+      "List all available agents (built-in and custom) with their descriptions and recent run counts.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "get_agent_runs",
+    description:
+      "Get recent agent run results, optionally filtered by ticket.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        ticket_id_or_title: {
+          type: "string",
+          description: "Optional: UUID or partial title of a ticket to filter by",
+        },
+        limit: {
+          type: "number",
+          description: "Number of runs to return (default: 5)",
+        },
+      },
       required: [],
     },
   },
@@ -1503,6 +1613,204 @@ export async function executeToolCall(
             content_count: ini.calendarItemIds.length,
             tags: ini.tags,
             target_date: ini.targetDate,
+          })),
+        });
+      }
+
+      case "dispatch_to_agent": {
+        const agentName = String(toolInput["agent_name"] ?? "engineering-agent");
+        const task = String(toolInput["task"] ?? "");
+        const ticketIdOrTitle = toolInput["ticket_id_or_title"]
+          ? String(toolInput["ticket_id_or_title"])
+          : undefined;
+        const extraContext = toolInput["context"]
+          ? String(toolInput["context"])
+          : "";
+
+        // Build context from ticket if provided
+        let context = extraContext;
+        let ticketId: string | undefined;
+        if (ticketIdOrTitle) {
+          ticketId = fuzzyFindTicket(storage, ticketIdOrTitle) ?? undefined;
+          if (ticketId) {
+            const ticket = storage.getTicket(ticketId);
+            if (ticket) {
+              context = `Ticket: ${ticket.title}\nDescription: ${ticket.description}\nPriority: ${ticket.priority}\nTags: ${ticket.tags.join(", ")}\n\n${extraContext}`;
+            }
+          }
+        }
+
+        // Get custom system prompt if this is a custom agent
+        const customDef = storage.getAgentDefinition(agentName);
+        const customSystemPrompt =
+          customDef && !customDef.isBuiltIn ? customDef.systemPrompt : undefined;
+
+        // Save run record
+        const runId = uuidv4();
+        const startTime = Date.now();
+        storage.saveAgentRun({
+          id: runId,
+          ticketId,
+          agentName,
+          task,
+          status: "running",
+          nextSteps: [],
+          toolsUsed: [],
+          createdAt: new Date().toISOString(),
+        });
+
+        // Run the agent
+        const result = await runAgent(
+          agentName,
+          task,
+          context,
+          storage,
+          config,
+          customSystemPrompt
+        );
+
+        // Update run record
+        storage.updateAgentRun(runId, {
+          output: result.output,
+          nextSteps: result.nextSteps,
+          blocker: result.blocker,
+          needsClarification: result.needsClarification,
+          toolsUsed: result.toolsUsed,
+          durationMs: result.durationMs,
+          status: result.blocker
+            ? "blocked"
+            : result.needsClarification
+            ? "needs_clarification"
+            : "completed",
+          completedAt: new Date().toISOString(),
+        });
+
+        // Update ticket if linked
+        if (ticketId) {
+          const ticket = storage.getTicket(ticketId);
+          if (ticket) {
+            const newDescription = `${ticket.description ?? ""}\n\n---\n**${agentName} output (${new Date().toLocaleDateString()}):**\n${result.output}`;
+            storage.updateTicket(ticketId, {
+              description: newDescription,
+              status: result.blocker ? "blocked" : "in_review",
+              blockers: result.blocker
+                ? [...ticket.blockers, result.blocker]
+                : ticket.blockers,
+            });
+          }
+        }
+
+        console.log(
+          `  [claude] ${agentName} completed in ${result.durationMs}ms, tools: ${result.toolsUsed.join(", ") || "none"}`
+        );
+
+        return JSON.stringify({
+          ok: true,
+          action: "dispatch_to_agent",
+          agent: agentName,
+          run_id: runId,
+          duration_ms: result.durationMs,
+          summary: result.taskSummary,
+          output: result.output.slice(0, 2000),
+          next_steps: result.nextSteps,
+          blocker: result.blocker ?? null,
+          needs_clarification: result.needsClarification ?? null,
+          tools_used: result.toolsUsed,
+        });
+      }
+
+      case "create_agent": {
+        const name = String(toolInput["name"] ?? "");
+        const displayName = String(toolInput["display_name"] ?? "");
+        const description = String(toolInput["description"] ?? "");
+        const systemPrompt = String(toolInput["system_prompt"] ?? "");
+        const capabilities = (toolInput["capabilities"] as string[]) ?? [];
+
+        if (!name) {
+          return JSON.stringify({ ok: false, error: "Agent name is required" });
+        }
+
+        // Don't overwrite built-ins
+        if (AGENT_SYSTEM_PROMPTS[name]) {
+          return JSON.stringify({
+            ok: false,
+            error: `"${name}" is a built-in agent and cannot be redefined`,
+          });
+        }
+
+        const def = createAgentDefinition(storage, {
+          name,
+          displayName,
+          description,
+          systemPrompt,
+          capabilities,
+        });
+
+        return JSON.stringify({
+          ok: true,
+          action: "create_agent",
+          agent_id: def.id,
+          name: def.name,
+          display_name: def.displayName,
+          description: def.description,
+        });
+      }
+
+      case "list_agents": {
+        const allDefs = listAgentDefinitions(storage);
+        const allRuns = storage.listAgentRuns();
+
+        // Count runs per agent
+        const runCounts: Record<string, number> = {};
+        for (const run of allRuns) {
+          runCounts[run.agentName] = (runCounts[run.agentName] ?? 0) + 1;
+        }
+
+        return JSON.stringify({
+          ok: true,
+          count: allDefs.length,
+          agents: allDefs.map((def) => ({
+            name: def.name,
+            display_name: def.displayName,
+            description: def.description,
+            is_built_in: def.isBuiltIn,
+            capabilities: def.capabilities,
+            recent_runs: runCounts[def.name] ?? 0,
+          })),
+        });
+      }
+
+      case "get_agent_runs": {
+        const ticketIdOrTitle = toolInput["ticket_id_or_title"]
+          ? String(toolInput["ticket_id_or_title"])
+          : undefined;
+        const limit = toolInput["limit"] ? Number(toolInput["limit"]) : 5;
+
+        let ticketId: string | undefined;
+        if (ticketIdOrTitle) {
+          ticketId = fuzzyFindTicket(storage, ticketIdOrTitle) ?? undefined;
+        }
+
+        const runs = storage.listAgentRuns(ticketId);
+        const limited = runs.slice(0, limit);
+
+        return JSON.stringify({
+          ok: true,
+          count: limited.length,
+          runs: limited.map((r) => ({
+            id: r.id,
+            agent: r.agentName,
+            task: r.task,
+            status: r.status,
+            summary: r.output ? r.output.slice(0, 300) : null,
+            next_steps: r.nextSteps,
+            blocker: r.blocker ?? null,
+            needs_clarification: r.needsClarification ?? null,
+            tools_used: r.toolsUsed,
+            duration_ms: r.durationMs ?? null,
+            ticket_id: r.ticketId ?? null,
+            created_at: r.createdAt,
+            completed_at: r.completedAt ?? null,
           })),
         });
       }

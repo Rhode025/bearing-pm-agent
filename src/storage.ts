@@ -10,6 +10,8 @@ import type {
   IncomingMessage,
   RecentContext,
   AgentHandoff,
+  AgentRun,
+  AgentDefinition,
 } from "./types.js";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -157,6 +159,34 @@ interface HandoffRow {
   status: string;
 }
 
+interface AgentDefinitionRow {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  system_prompt: string;
+  capabilities: string;
+  is_built_in: number;
+  created_at: string;
+}
+
+interface AgentRunRow {
+  id: string;
+  ticket_id: string | null;
+  calendar_item_id: string | null;
+  agent_name: string;
+  task: string;
+  output: string | null;
+  next_steps: string;
+  blocker: string | null;
+  needs_clarification: string | null;
+  tools_used: string;
+  duration_ms: number | null;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+}
+
 // ─── Mappers ───────────────────────────────────────────────────────────────────
 
 function rowToTicket(row: TicketRow): Ticket {
@@ -284,6 +314,38 @@ function rowToHandoff(row: HandoffRow): AgentHandoff {
     context: row.context,
     createdAt: row.created_at,
     status: row.status as AgentHandoff["status"],
+  };
+}
+
+function rowToAgentDefinition(row: AgentDefinitionRow): AgentDefinition {
+  return {
+    id: row.id,
+    name: row.name,
+    displayName: row.display_name,
+    description: row.description,
+    systemPrompt: row.system_prompt,
+    capabilities: deserializeArr<string>(row.capabilities),
+    isBuiltIn: row.is_built_in === 1,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToAgentRun(row: AgentRunRow): AgentRun {
+  return {
+    id: row.id,
+    ticketId: row.ticket_id ?? undefined,
+    calendarItemId: row.calendar_item_id ?? undefined,
+    agentName: row.agent_name,
+    task: row.task,
+    output: row.output ?? undefined,
+    nextSteps: deserializeArr<string>(row.next_steps),
+    blocker: row.blocker ?? undefined,
+    needsClarification: row.needs_clarification ?? undefined,
+    toolsUsed: deserializeArr<string>(row.tools_used),
+    durationMs: row.duration_ms ?? undefined,
+    status: row.status as AgentRun["status"],
+    createdAt: row.created_at,
+    completedAt: row.completed_at ?? undefined,
   };
 }
 
@@ -420,6 +482,34 @@ export class Storage {
       CREATE TABLE IF NOT EXISTS recent_context (
         key TEXT PRIMARY KEY,
         value TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_definitions (
+        id TEXT PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        system_prompt TEXT NOT NULL,
+        capabilities TEXT NOT NULL DEFAULT '[]',
+        is_built_in INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        ticket_id TEXT,
+        calendar_item_id TEXT,
+        agent_name TEXT NOT NULL,
+        task TEXT NOT NULL,
+        output TEXT,
+        next_steps TEXT NOT NULL DEFAULT '[]',
+        blocker TEXT,
+        needs_clarification TEXT,
+        tools_used TEXT NOT NULL DEFAULT '[]',
+        duration_ms INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        completed_at TEXT
       );
     `);
   }
@@ -985,6 +1075,153 @@ export class Storage {
 
   setLastAgent(agent: string): void {
     this.setRecentContext("lastAgentName", agent);
+  }
+
+  // ─── Agent Definitions ────────────────────────────────────────────────────────
+
+  saveAgentDefinition(def: AgentDefinition): void {
+    try {
+      this.db
+        .prepare(
+          `INSERT OR REPLACE INTO agent_definitions
+          (id, name, display_name, description, system_prompt, capabilities, is_built_in, created_at)
+          VALUES
+          (@id, @name, @display_name, @description, @system_prompt, @capabilities, @is_built_in, @created_at)`
+        )
+        .run({
+          id: def.id,
+          name: def.name,
+          display_name: def.displayName,
+          description: def.description,
+          system_prompt: def.systemPrompt,
+          capabilities: serializeArr(def.capabilities),
+          is_built_in: def.isBuiltIn ? 1 : 0,
+          created_at: def.createdAt,
+        });
+    } catch (err) {
+      throw new Error(
+        `Storage.saveAgentDefinition failed for name=${def.name}: ${String(err)}`
+      );
+    }
+  }
+
+  getAgentDefinition(name: string): AgentDefinition | null {
+    try {
+      const row = this.db
+        .prepare("SELECT * FROM agent_definitions WHERE name = ?")
+        .get(name) as AgentDefinitionRow | undefined;
+      return row ? rowToAgentDefinition(row) : null;
+    } catch (err) {
+      throw new Error(
+        `Storage.getAgentDefinition failed for name=${name}: ${String(err)}`
+      );
+    }
+  }
+
+  listAgentDefinitions(): AgentDefinition[] {
+    try {
+      const rows = this.db
+        .prepare(
+          "SELECT * FROM agent_definitions WHERE is_built_in = 0 ORDER BY created_at DESC"
+        )
+        .all() as AgentDefinitionRow[];
+      return rows.map(rowToAgentDefinition);
+    } catch (err) {
+      throw new Error(`Storage.listAgentDefinitions failed: ${String(err)}`);
+    }
+  }
+
+  deleteAgentDefinition(name: string): void {
+    try {
+      this.db
+        .prepare("DELETE FROM agent_definitions WHERE name = ?")
+        .run(name);
+    } catch (err) {
+      throw new Error(
+        `Storage.deleteAgentDefinition failed for name=${name}: ${String(err)}`
+      );
+    }
+  }
+
+  // ─── Agent Runs ───────────────────────────────────────────────────────────────
+
+  saveAgentRun(run: AgentRun): void {
+    try {
+      this.db
+        .prepare(
+          `INSERT OR REPLACE INTO agent_runs
+          (id, ticket_id, calendar_item_id, agent_name, task, output,
+           next_steps, blocker, needs_clarification, tools_used,
+           duration_ms, status, created_at, completed_at)
+          VALUES
+          (@id, @ticket_id, @calendar_item_id, @agent_name, @task, @output,
+           @next_steps, @blocker, @needs_clarification, @tools_used,
+           @duration_ms, @status, @created_at, @completed_at)`
+        )
+        .run({
+          id: run.id,
+          ticket_id: run.ticketId ?? null,
+          calendar_item_id: run.calendarItemId ?? null,
+          agent_name: run.agentName,
+          task: run.task,
+          output: run.output ?? null,
+          next_steps: serializeArr(run.nextSteps),
+          blocker: run.blocker ?? null,
+          needs_clarification: run.needsClarification ?? null,
+          tools_used: serializeArr(run.toolsUsed),
+          duration_ms: run.durationMs ?? null,
+          status: run.status,
+          created_at: run.createdAt,
+          completed_at: run.completedAt ?? null,
+        });
+    } catch (err) {
+      throw new Error(
+        `Storage.saveAgentRun failed for id=${run.id}: ${String(err)}`
+      );
+    }
+  }
+
+  getAgentRun(id: string): AgentRun | null {
+    try {
+      const row = this.db
+        .prepare("SELECT * FROM agent_runs WHERE id = ?")
+        .get(id) as AgentRunRow | undefined;
+      return row ? rowToAgentRun(row) : null;
+    } catch (err) {
+      throw new Error(`Storage.getAgentRun failed for id=${id}: ${String(err)}`);
+    }
+  }
+
+  listAgentRuns(ticketId?: string): AgentRun[] {
+    try {
+      if (ticketId) {
+        const rows = this.db
+          .prepare(
+            "SELECT * FROM agent_runs WHERE ticket_id = ? ORDER BY created_at DESC"
+          )
+          .all(ticketId) as AgentRunRow[];
+        return rows.map(rowToAgentRun);
+      }
+      const rows = this.db
+        .prepare("SELECT * FROM agent_runs ORDER BY created_at DESC")
+        .all() as AgentRunRow[];
+      return rows.map(rowToAgentRun);
+    } catch (err) {
+      throw new Error(`Storage.listAgentRuns failed: ${String(err)}`);
+    }
+  }
+
+  updateAgentRun(id: string, updates: Partial<AgentRun>): void {
+    try {
+      const existing = this.getAgentRun(id);
+      if (!existing) throw new Error(`AgentRun ${id} not found`);
+      const merged: AgentRun = { ...existing, ...updates, id };
+      this.saveAgentRun(merged);
+    } catch (err) {
+      throw new Error(
+        `Storage.updateAgentRun failed for id=${id}: ${String(err)}`
+      );
+    }
   }
 
   close(): void {

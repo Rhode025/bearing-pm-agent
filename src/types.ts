@@ -333,3 +333,41 @@ export interface AgentConfig {
   handles: string[];
   defaultPriority: number;
 }
+
+// ─── Agent Definition ──────────────────────────────────────────────────────────
+
+export interface AgentDefinition {
+  id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  systemPrompt: string;
+  capabilities: string[];
+  isBuiltIn: boolean;
+  createdAt: string;
+}
+
+// ─── Agent Run ─────────────────────────────────────────────────────────────────
+
+export interface AgentRun {
+  id: string;
+  ticketId?: string;
+  calendarItemId?: string;
+  agentName: string;
+  task: string;
+  output?: string;
+  nextSteps: string[];
+  blocker?: string;
+  needsClarification?: string;
+  toolsUsed: string[];
+  durationMs?: number;
+  status:
+    | "pending"
+    | "running"
+    | "completed"
+    | "blocked"
+    | "needs_clarification"
+    | "failed";
+  createdAt: string;
+  completedAt?: string;
+}
